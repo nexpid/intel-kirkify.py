@@ -1,5 +1,8 @@
 # kirkify.py
 
+> [!NOTE]
+> A vibecoded fork of kirkify.py, with added Intel iGPU support
+
 Groundbreaking engine behind the hit website, kirkify.me, which some are saying is the most innovative software since Facebook or Google.
 
 It's a relatively simple python script to kirkify any image or video given.
@@ -60,6 +63,23 @@ python kirkify.py input.mp4 output.mp4 --gpu --fast
 You should see a line like: `INSwapper active providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']`.
 If CUDA is not available, the script will fall back to CPU and print a warning.
 
+### Intel Integrated GPU Acceleration (Optional)
+
+On Linux, Intel integrated GPU acceleration uses ONNX Runtime's OpenVINO execution provider. Install the OpenVINO build in place of the default `onnxruntime` package:
+
+```bash
+pip uninstall -y onnxruntime
+pip install onnxruntime-openvino
+```
+
+Make sure the Intel GPU driver and Level Zero runtime are installed, then run:
+
+```bash
+python kirkify.py input.mp4 output.mp4 --intel --fast
+```
+
+The script uses OpenVINO's GPU device and falls back to CPU if the provider is unavailable. You should see `OpenVINOExecutionProvider` in the reported active providers. Do not install `onnxruntime` and `onnxruntime-openvino` together in the same environment; use the CUDA instructions above for NVIDIA GPUs instead.
+
 ## Usage
 
 ```bash
@@ -74,6 +94,7 @@ The script supports several flags to speed up processing and to select the compu
 - `--frame-step N`: Process 1 out of every N frames (video only). Frames are renumbered to keep the output sequence contiguous.
 - `--workers M`: Use M threads to process frames in parallel (video only). A good default is the number of CPU cores.
 - `--gpu`: Prefer GPU for face detection and INSwapper when available.
+- `--intel`: Use an Intel integrated GPU through OpenVINO when available.
 - `--cpu`: Force CPU even if a GPU is present.
 
 Examples (cmd/PowerShell):
@@ -91,5 +112,6 @@ python kirkify.py input.mp4 output.mp4 --cpu
 
 Notes:
 - GPU mode requires ONNX Runtime GPU (onnxruntime-gpu) installed and a compatible NVIDIA driver. If `--gpu` is requested but CUDA is not available, the script will fall back to CPU and print a warning.
+- Intel mode requires `onnxruntime-openvino` and a working Intel GPU driver/runtime. If `--intel` is requested but OpenVINO is not available, the script will fall back to CPU and print a warning.
 - When using `--frame-step`, only the selected frames are processed; the output video remains valid because frames are renumbered sequentially.
 - `ffmpeg` must be installed and available in your PATH.

@@ -38,17 +38,18 @@ KIRKS_DIR = Path('kirks')
 def ort_available_and_providers() -> tuple[bool, list[str]]:
     try:
         import onnxruntime as ort  # type: ignore
-        try:
-            # If directory is not provided, it will auto-search in site-packages/nvidia/...
-            ort.preload_dlls()
-            print("[INFO] CUDA DLLs preloaded from nvidia-* wheels")
-        except Exception as e:
-            print("[WARN] Could not preload CUDA DLLs:", e)
         providers = []
         try:
             providers = list(ort.get_available_providers())  # e.g., ['CUDAExecutionProvider','CPUExecutionProvider']
         except Exception:
             providers = []
+        if 'CUDAExecutionProvider' in providers:
+            try:
+                # If directory is not provided, it will auto-search in site-packages/nvidia/...
+                ort.preload_dlls()
+                print("[INFO] CUDA DLLs preloaded from nvidia-* wheels")
+            except Exception as e:
+                print("[WARN] Could not preload CUDA DLLs:", e)
         return True, providers
     except Exception:
         return False, []
@@ -58,6 +59,15 @@ def get_session_providers(session) -> list[str]:
         return list(session.get_providers())
     except Exception:
         return []
+
+def get_faceanalysis_providers(faceanalysis: FaceAnalysis) -> dict[str, list[str]]:
+    active = {}
+    for model_name, model in getattr(faceanalysis, 'models', {}).items():
+        session = getattr(model, 'session', None) or getattr(model, 'model', None)
+        providers = get_session_providers(session) if session is not None else []
+        if providers:
+            active[model_name] = providers
+    return active
 
 @contextmanager
 def suppress_output():
@@ -69,18 +79,17 @@ def suppress_output():
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
-def initialize_faceanalysis_and_swapper(det_size=(640, 640), ctx_id: int = 0, swapper_providers: list[str] | None = None):
-    faceanalysis = FaceAnalysis(name="buffalo_l")
+def initialize_faceanalysis_and_swapper(det_size=(640, 640), ctx_id: int = 0, swapper_providers=None):
+    faceanalysis = FaceAnalysis(name="buffalo_l", providers=swapper_providers)
     faceanalysis.prepare(ctx_id=ctx_id, det_size=det_size)
     swapper = insightface.model_zoo.get_model('inswapper_128.onnx', download=False, download_zip=False)
     if swapper_providers:
         try:
-            import onnxruntime as ort  # noqa: F401
             sess = getattr(swapper, 'session', None) or getattr(swapper, 'model', None)
             if sess and hasattr(sess, 'set_providers'):
                 sess.set_providers(swapper_providers)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"Could not set INSwapper providers: {exc}") from exc
     return faceanalysis, swapper
 
 def get_video_fps(video_path: str) -> float:
@@ -279,23 +288,31 @@ def main():
     det = (320, 320) if FAST else (640, 640)
     # Explicit CPU/GPU selection for FaceAnalysis and ONNX Runtime
     USE_GPU = '--gpu' in sys.argv
+    USE_INTEL = '--intel' in sys.argv
     USE_CPU = '--cpu' in sys.argv
-    ctx_id = 0 if USE_GPU and not USE_CPU else (-1 if USE_CPU else 0)
+    ctx_id = 0 if (USE_GPU or USE_INTEL) and not USE_CPU else (-1 if USE_CPU else 0)
     providers = None
     if USE_GPU and not USE_CPU:
         providers = ['CUDAExecutionProvider']
+    elif USE_INTEL and not USE_GPU and not USE_CPU:
+        providers = [('OpenVINOExecutionProvider', {'device_type': 'GPU'}), 'CPUExecutionProvider']
     elif USE_CPU:
         providers = ['CPUExecutionProvider']
 
     # Initialize models once
-    # Pre-check ONNX Runtime availability and CUDA support
+    # Pre-check ONNX Runtime availability and the requested hardware provider.
     ok, avail = ort_available_and_providers()
     if USE_GPU and (not ok or 'CUDAExecutionProvider' not in avail):
         print("[WARN] --gpu requested, but ONNX Runtime GPU is not available; falling back to CPU.")
         providers = ['CPUExecutionProvider']
         ctx_id = -1
+    elif USE_INTEL and not USE_GPU and (not ok or 'OpenVINOExecutionProvider' not in avail):
+        print("[WARN] --intel requested, but ONNX Runtime OpenVINO is not available; falling back to CPU.")
+        providers = ['CPUExecutionProvider']
+        ctx_id = -1
 
-    print("Initializing models..." + (" (fast mode)" if FAST else "") + (" [GPU]" if ctx_id == 0 else " [CPU]"))
+    device_label = "Intel GPU" if USE_INTEL and ctx_id == 0 else ("GPU" if ctx_id == 0 else "CPU")
+    print("Initializing models..." + (" (fast mode)" if FAST else "") + f" [{device_label}]")
     with suppress_output():
         FACE_ANALYSIS, FACE_SWAPPER = initialize_faceanalysis_and_swapper(det_size=det, ctx_id=ctx_id, swapper_providers=providers)
 
@@ -307,6 +324,8 @@ def main():
     else:
         if providers:
             print(f"INSwapper active providers unavailable; attempted: {providers}")
+    for model_name, model_providers in get_faceanalysis_providers(FACE_ANALYSIS).items():
+        print(f"FaceAnalysis {model_name} active providers: {model_providers}")
 
     try:
         if IS_IMAGE:
