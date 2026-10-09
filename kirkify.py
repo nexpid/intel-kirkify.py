@@ -108,8 +108,15 @@ def extract_frames(video_path: str):
         str(UNPROCESSED_DIR / 'frame_%04d.png')
     ], check=True)
 
-def extract_audio(video_path: str) -> str:
-    """Extract audio to audio.aac"""
+def extract_audio(video_path: str) -> str | None:
+    """Extract audio to audio.aac when the video has an audio stream."""
+    audio_stream = run([
+        'ffprobe', '-v', 'error', '-select_streams', 'a:0',
+        '-show_entries', 'stream=index', '-of', 'csv=p=0', video_path
+    ], capture_output=True, text=True, check=False)
+    if audio_stream.returncode != 0 or not audio_stream.stdout.strip():
+        return None
+
     run([
         'ffmpeg', '-y', '-loglevel', 'error',
         '-i', video_path,
@@ -118,30 +125,33 @@ def extract_audio(video_path: str) -> str:
     ], check=True)
     return 'audio.aac'
 
-def reconstruct_video(fps: float, audio_path: str, output_path: str, frame_step: int):
-    """Combine processed frames with audio"""
+def reconstruct_video(fps: float, audio_path: str | None, output_path: str, frame_step: int):
+    """Combine processed frames with audio when available."""
     PROCESSED_DIR.mkdir(exist_ok=True)
-    run([
+    command = [
         'ffmpeg', '-y', '-loglevel', 'error',
         '-framerate', str(fps / frame_step),
         '-i', str(PROCESSED_DIR / 'frame_%04d.png'),
-        '-i', audio_path,
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
-        '-c:a', 'copy', '-shortest',
-        output_path
-    ], check=True)
+    ]
+    if audio_path:
+        command.extend(['-i', audio_path])
+    command.extend(['-c:v', 'libx264', '-pix_fmt', 'yuv420p'])
+    if audio_path:
+        command.extend(['-c:a', 'copy', '-shortest'])
+    command.append(output_path)
+    run(command, check=True)
 
-def cleanup(audio_path: str):
+def cleanup(audio_path: str | None):
     """Remove intermediate files"""
     rmtree(UNPROCESSED_DIR, ignore_errors=True)
     rmtree(PROCESSED_DIR, ignore_errors=True)
-    if os.path.exists(audio_path):
+    if audio_path and os.path.exists(audio_path):
         os.remove(audio_path)
 
 def get_random_kirk_face(faceanalysis: FaceAnalysis):
     """Get a random Kirk face, ensuring it has a detected face"""
     for _ in range(3):  # Try up to 3 times
-        kirk_path = KIRKS_DIR / f'kirk_{randint(0, 2)}.jpg'
+        kirk_path = KIRKS_DIR / f'kirk_{randint(0, 8)}.jpg'
         kirk_img = imread(str(kirk_path))
         faces = faceanalysis.get(kirk_img)
         if faces:
@@ -210,6 +220,8 @@ def kirkify_video(TARGET_PATH, OUTPUT_PATH, FACE_ANALYSIS, FACE_SWAPPER, frame_s
     
     print("Extracting audio...")
     AUDIO_PATH = extract_audio(TARGET_PATH)
+    if AUDIO_PATH is None:
+        print("  No audio stream found; output will be video-only.")
     
     print("Processing frames...")
     stats = process_all_frames(FACE_ANALYSIS, FACE_SWAPPER, frame_step=frame_step, workers=workers)
