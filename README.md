@@ -80,6 +80,23 @@ python kirkify.py input.mp4 output.mp4 --intel --fast
 
 The script uses OpenVINO's GPU device and falls back to CPU if the provider is unavailable. You should see `OpenVINOExecutionProvider` in the reported active providers. Do not install `onnxruntime` and `onnxruntime-openvino` together in the same environment; use the CUDA instructions above for NVIDIA GPUs instead.
 
+### AMD Radeon GPU Acceleration (Optional)
+
+On Linux, AMD Radeon discrete GPUs and supported integrated Radeon GPUs can use ONNX Runtime's ROCm execution provider. ROCm support depends on your GPU generation and AMD's current ROCm compatibility list. Install the ROCm-enabled ONNX Runtime build instead of the default or OpenVINO build:
+
+```bash
+pip uninstall -y onnxruntime onnxruntime-openvino
+pip install onnxruntime-rocm
+```
+
+Install the matching ROCm runtime and AMD GPU driver for your distribution, then run:
+
+```bash
+python kirkify.py input.mp4 output.mp4 --amd --fast
+```
+
+`--rocm` is also accepted as an alias. The script uses `ROCMExecutionProvider` for both face detection and swapping, and falls back to CPU with a warning if the installed runtime does not expose that provider. You should see `ROCMExecutionProvider` in the reported active providers. The AMD runtime package and the OpenVINO package are alternatives; do not install both in the same environment.
+
 ## Usage
 
 ```bash
@@ -95,6 +112,7 @@ The script supports several flags to speed up processing and to select the compu
 - `--workers M`: Use M threads to process frames in parallel (video only). A good default is the number of CPU cores.
 - `--gpu`: Prefer GPU for face detection and INSwapper when available.
 - `--intel`: Use an Intel integrated GPU through OpenVINO when available.
+- `--amd`: Use an AMD Radeon GPU through ROCm when available (`--rocm` is an alias).
 - `--cpu`: Force CPU even if a GPU is present.
 
 Examples (cmd/PowerShell):
@@ -108,10 +126,14 @@ python kirkify.py input.mp4 output.mp4 --fast --frame-step 3 --workers 8 --gpu
 
 # Force CPU and keep full quality detector
 python kirkify.py input.mp4 output.mp4 --cpu
+
+# AMD Radeon GPU, including supported integrated Radeon GPUs
+python kirkify.py input.mp4 output.mp4 --amd --fast
 ```
 
 Notes:
 - GPU mode requires ONNX Runtime GPU (onnxruntime-gpu) installed and a compatible NVIDIA driver. If `--gpu` is requested but CUDA is not available, the script will fall back to CPU and print a warning.
 - Intel mode requires `onnxruntime-openvino` and a working Intel GPU driver/runtime. If `--intel` is requested but OpenVINO is not available, the script will fall back to CPU and print a warning.
+- AMD mode requires `onnxruntime-rocm`, a compatible ROCm installation, and an AMD GPU supported by that ROCm release. If `--amd` is requested but ROCm is not available, the script will fall back to CPU and print a warning.
 - When using `--frame-step`, only the selected frames are processed; the output video remains valid because frames are renumbered sequentially.
 - `ffmpeg` must be installed and available in your PATH.

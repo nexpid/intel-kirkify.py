@@ -40,7 +40,7 @@ def ort_available_and_providers() -> tuple[bool, list[str]]:
         import onnxruntime as ort  # type: ignore
         providers = []
         try:
-            providers = list(ort.get_available_providers())  # e.g., ['CUDAExecutionProvider','CPUExecutionProvider']
+            providers = list(ort.get_available_providers())
         except Exception:
             providers = []
         if 'CUDAExecutionProvider' in providers:
@@ -151,7 +151,7 @@ def cleanup(audio_path: str | None):
 def get_random_kirk_face(faceanalysis: FaceAnalysis):
     """Get a random Kirk face, ensuring it has a detected face"""
     for _ in range(3):  # Try up to 3 times
-        kirk_path = KIRKS_DIR / f'kirk_{randint(0, 8)}.jpg'
+        kirk_path = KIRKS_DIR / f'kirk_{randint(0, 7)}.jpg'
         kirk_img = imread(str(kirk_path))
         faces = faceanalysis.get(kirk_img)
         if faces:
@@ -301,13 +301,16 @@ def main():
     # Explicit CPU/GPU selection for FaceAnalysis and ONNX Runtime
     USE_GPU = '--gpu' in sys.argv
     USE_INTEL = '--intel' in sys.argv
+    USE_AMD = '--amd' in sys.argv or '--rocm' in sys.argv
     USE_CPU = '--cpu' in sys.argv
-    ctx_id = 0 if (USE_GPU or USE_INTEL) and not USE_CPU else (-1 if USE_CPU else 0)
+    ctx_id = 0 if (USE_GPU or USE_INTEL or USE_AMD) and not USE_CPU else (-1 if USE_CPU else 0)
     providers = None
     if USE_GPU and not USE_CPU:
         providers = ['CUDAExecutionProvider']
-    elif USE_INTEL and not USE_GPU and not USE_CPU:
+    elif USE_INTEL and not USE_GPU and not USE_AMD and not USE_CPU:
         providers = [('OpenVINOExecutionProvider', {'device_type': 'GPU'}), 'CPUExecutionProvider']
+    elif USE_AMD and not USE_GPU and not USE_INTEL and not USE_CPU:
+        providers = ['ROCMExecutionProvider', 'CPUExecutionProvider']
     elif USE_CPU:
         providers = ['CPUExecutionProvider']
 
@@ -318,12 +321,21 @@ def main():
         print("[WARN] --gpu requested, but ONNX Runtime GPU is not available; falling back to CPU.")
         providers = ['CPUExecutionProvider']
         ctx_id = -1
-    elif USE_INTEL and not USE_GPU and (not ok or 'OpenVINOExecutionProvider' not in avail):
+    elif USE_INTEL and not USE_GPU and not USE_AMD and (not ok or 'OpenVINOExecutionProvider' not in avail):
         print("[WARN] --intel requested, but ONNX Runtime OpenVINO is not available; falling back to CPU.")
         providers = ['CPUExecutionProvider']
         ctx_id = -1
+    elif USE_AMD and not USE_GPU and not USE_INTEL and (not ok or 'ROCMExecutionProvider' not in avail):
+        print("[WARN] --amd requested, but ONNX Runtime ROCm is not available; falling back to CPU.")
+        providers = ['CPUExecutionProvider']
+        ctx_id = -1
 
-    device_label = "Intel GPU" if USE_INTEL and ctx_id == 0 else ("GPU" if ctx_id == 0 else "CPU")
+    if USE_INTEL and ctx_id == 0:
+        device_label = "Intel GPU"
+    elif USE_AMD and ctx_id == 0:
+        device_label = "AMD GPU"
+    else:
+        device_label = "GPU" if ctx_id == 0 else "CPU"
     print("Initializing models..." + (" (fast mode)" if FAST else "") + f" [{device_label}]")
     with suppress_output():
         FACE_ANALYSIS, FACE_SWAPPER = initialize_faceanalysis_and_swapper(det_size=det, ctx_id=ctx_id, swapper_providers=providers)
